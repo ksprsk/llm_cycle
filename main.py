@@ -119,16 +119,24 @@ class HistoryManager:
         Returns:
             str: Path to the saved file
         """
-        timestamp = datetime.datetime.now().isoformat().replace(':', '-')
+        # Generate proper ISO format timestamp
+        timestamp_original = datetime.datetime.now().isoformat()
+        
+        # Create file-safe version for the filename
+        timestamp_filename = timestamp_original.replace(':', '-')
+        
+        # Create the session directory
         session_dir = self.base_dir / session_id
         session_dir.mkdir(exist_ok=True, parents=True)
         
-        filename = f"{timestamp}.json"
+        # Set filename using the file-safe version
+        filename = f"{timestamp_filename}.json"
         filepath = session_dir / filename
         
+        # Store data with the original ISO format timestamp
         data = {
             "session_id": session_id,
-            "timestamp": timestamp,
+            "timestamp": timestamp_original,  # Store original ISO format
             "messages": messages
         }
         
@@ -136,20 +144,7 @@ class HistoryManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         return str(filepath)
-    
-    def load_debate(self, filepath):
-        """
-        Load a debate from a file.
-        
-        Args:
-            filepath (str): Path to the debate file
-        
-        Returns:
-            dict: Debate data
-        """
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    
+
     def search_debates(self, keyword=None, start_date=None, end_date=None):
         """
         Search for debates by keyword and/or date range.
@@ -184,13 +179,33 @@ class HistoryManager:
             for debate_file in session_dir.glob("*.json"):
                 # Check date range if specified
                 if start_dt or end_dt:
-                    file_dt = datetime.datetime.fromisoformat(
-                        debate_file.stem.replace('-', ':')
-                    )
-                    
-                    if start_dt and file_dt < start_dt:
-                        continue
-                    if end_dt and file_dt > end_dt:
+                    try:
+                        # Load the file and get timestamp from the content
+                        with open(debate_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            timestamp = data.get('timestamp', '')
+                        
+                        # Parse the timestamp from the file content
+                        if timestamp:
+                            try:
+                                # First try standard ISO format
+                                file_dt = datetime.datetime.fromisoformat(timestamp)
+                            except ValueError:
+                                # If that fails, try replacing hyphens with colons (for older files)
+                                parts = timestamp.split('T')
+                                if len(parts) == 2:
+                                    date_part = parts[0]
+                                    time_part = parts[1].replace('-', ':')
+                                    file_dt = datetime.datetime.fromisoformat(f"{date_part}T{time_part}")
+                                else:
+                                    raise ValueError(f"Cannot parse timestamp: {timestamp}")
+                            
+                            if start_dt and file_dt < start_dt:
+                                continue
+                            if end_dt and file_dt > end_dt:
+                                continue
+                    except Exception as e:
+                        print(f"Error parsing timestamp for {debate_file}: {e}")
                         continue
                 
                 # Check keyword if specified
@@ -208,7 +223,8 @@ class HistoryManager:
                         if not found:
                             continue
                             
-                    except:
+                    except Exception as e:
+                        print(f"Error searching content for {debate_file}: {e}")
                         # Skip files that can't be loaded
                         continue
                 

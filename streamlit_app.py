@@ -198,7 +198,7 @@ def main():
             if st.button("Submit"):
                 if user_input:
                     run_debate_round(user_input)
-                    st.experimental_rerun()
+                    st.rerun()
     else:
         # No active debate
         st.info("Start a new debate or load an existing one from the sidebar.")
@@ -220,7 +220,7 @@ def main():
                 if st.button(question):
                     initialize_debate(st.session_state.config_path)
                     run_debate_round(question)
-                    st.experimental_rerun()
+                    st.rerun()
 
 
 if __name__ == "__main__":
