@@ -1,0 +1,42 @@
+# API keys and environment variables
+.env
+config.json
+**/keys.py
+**/credentials.py
+
+# Debate history
+debate_history/
+
+# Python virtual environments
+venv/
+env/
+.venv/
+.env/
+env.bak/
+venv.bak/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Logs
+logs/
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
