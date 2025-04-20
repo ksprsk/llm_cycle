@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Import our existing classes (assuming they're in main.py)
+# Import our existing classes
 from main import AIModel, HistoryManager, AIDebate
 
 # Load environment variables
@@ -33,6 +33,21 @@ if "config_path" not in st.session_state:
     st.session_state.config_path = "config.json"
 if "history_manager" not in st.session_state:
     st.session_state.history_manager = HistoryManager()
+
+
+# Helper function to load JSON file
+def load_json_file(filepath):
+    """
+    Load and parse a JSON file.
+    
+    Args:
+        filepath (str): Path to the JSON file
+        
+    Returns:
+        dict: Parsed JSON data
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
 def initialize_debate(config_path="config.json"):
@@ -67,8 +82,8 @@ def run_debate_round(user_input):
 def load_debate_session(filepath):
     """Load an existing debate session"""
     try:
-        # Load the debate data
-        debate_data = st.session_state.history_manager.load_debate(filepath)
+        # Load the debate data using our helper function
+        debate_data = load_json_file(filepath)
         
         # Create a new debate instance
         debate = initialize_debate(st.session_state.config_path)
@@ -109,22 +124,26 @@ def search_debates():
             
             # Display results with load buttons
             for i, filepath in enumerate(results):
-                debate_data = st.session_state.history_manager.load_debate(filepath)
-                
-                # Find first user input
-                user_input = "N/A"
-                timestamp = debate_data.get("timestamp", "Unknown")
-                for msg in debate_data.get("messages", []):
-                    if msg.get("role") == "input":
-                        user_input = msg.get("content", "N/A")
-                        break
-                
-                col1, col2 = st.sidebar.columns([3, 1])
-                with col1:
-                    st.write(f"**{timestamp}**  \n{user_input[:50]}...")
-                with col2:
-                    if st.button("Load", key=f"load_{i}"):
-                        load_debate_session(filepath)
+                try:
+                    # Load debate data directly using our helper function
+                    debate_data = load_json_file(filepath)
+                    
+                    # Find first user input
+                    user_input = "N/A"
+                    timestamp = debate_data.get("timestamp", "Unknown")
+                    for msg in debate_data.get("messages", []):
+                        if msg.get("role") == "input":
+                            user_input = msg.get("content", "N/A")
+                            break
+                    
+                    col1, col2 = st.sidebar.columns([3, 1])
+                    with col1:
+                        st.write(f"**{timestamp}**  \n{user_input[:50]}...")
+                    with col2:
+                        if st.button("Load", key=f"load_{i}"):
+                            load_debate_session(filepath)
+                except Exception as e:
+                    st.sidebar.write(f"Error loading file {filepath}: {str(e)}")
         else:
             st.sidebar.write("No debates found matching your criteria.")
 
