@@ -33,6 +33,8 @@ if "config_path" not in st.session_state:
     st.session_state.config_path = "config.json"
 if "history_manager" not in st.session_state:
     st.session_state.history_manager = HistoryManager()
+if "load_filepath" not in st.session_state:
+    st.session_state.load_filepath = None
 
 
 # Helper function to load JSON file
@@ -79,8 +81,20 @@ def run_debate_round(user_input):
     st.session_state.messages = st.session_state.debate.messages.copy()
 
 
-def load_debate_session(filepath):
+def set_load_filepath(filepath):
+    """Set the filepath to load in session state"""
+    st.session_state.load_filepath = filepath
+
+
+def load_debate_session(filepath=None):
     """Load an existing debate session"""
+    # Use filepath from arguments or from session state
+    filepath = filepath or st.session_state.load_filepath
+    
+    if not filepath:
+        st.error("No filepath specified for loading")
+        return False
+    
     try:
         # Load the debate data using our helper function
         debate_data = load_json_file(filepath)
@@ -95,11 +109,13 @@ def load_debate_session(filepath):
         # Update session state
         st.session_state.current_session_id = debate.session_id
         st.session_state.messages = debate.messages.copy()
+        st.session_state.debate_running = True
+        st.session_state.load_filepath = None  # Clear after successful load
         
-        st.success(f"Loaded debate session from {Path(filepath).name}")
         return True
     except Exception as e:
         st.error(f"Error loading debate: {str(e)}")
+        st.session_state.load_filepath = None  # Clear on error
         return False
 
 
@@ -140,8 +156,8 @@ def search_debates():
                     with col1:
                         st.write(f"**{timestamp}**  \n{user_input[:50]}...")
                     with col2:
-                        if st.button("Load", key=f"load_{i}"):
-                            load_debate_session(filepath)
+                        if st.button("Load", key=f"load_{i}", on_click=set_load_filepath, args=(filepath,)):
+                            pass  # The on_click callback handles setting the filepath
                 except Exception as e:
                     st.sidebar.write(f"Error loading file {filepath}: {str(e)}")
         else:
@@ -172,6 +188,13 @@ def render_message(msg):
 def main():
     # Title
     st.title("AI Debate System")
+    
+    # Check if we need to load a debate from a previous click
+    if st.session_state.load_filepath:
+        success = load_debate_session()
+        if success:
+            st.success(f"Loaded debate session!")
+            st.rerun()
     
     # Sidebar
     st.sidebar.title("Controls")
