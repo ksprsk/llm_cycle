@@ -171,7 +171,7 @@ def main():
     # New debate button
     if st.sidebar.button("Start New Debate"):
         initialize_debate(st.session_state.config_path)
-        st.experimental_rerun()
+        st.rerun()
     
     # Search functionality
     st.sidebar.markdown("## Search Previous Debates")
