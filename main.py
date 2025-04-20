@@ -280,9 +280,8 @@ While collaborating with other AI models, provide unique insights, valuable pers
                 config = json.load(f)
             
             for model_config in config.get("models", []):
-                # Get API key from environment variable
-                api_key_env = model_config.get("api_key_env")
-                api_key = os.getenv(api_key_env)
+                # Get API key directly from config
+                api_key = model_config.get("api_key")
                 
                 if not api_key:
                     print(f"Warning: API key not found for {model_config.get('name')}. Skipping model.")
