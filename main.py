@@ -536,17 +536,18 @@ Maintain a helpful, precise, and professional tone at all times."""
         prompt = f"{self.base_prompt}\n\n{self.phase_prompts.get(phase, '')}\n{self.key_rules}"
         return prompt
     
-    def run_phase(self, phase, topic=None, previous_messages=None):
+    def run_phase(self, phase, model_index, topic=None, previous_messages=None):
         """
-        Run a single phase of the debate with all AI models.
+        Run a single phase of the debate with a specific AI model.
         
         Args:
             phase (str): Current debate phase ('propose', 'critique', or 'synthesize')
+            model_index (int): Index of the model assigned to this phase
             topic (str, optional): The debate topic (used for propose phase)
             previous_messages (list, optional): Messages from previous phases
             
         Returns:
-            list: List of (model_name, response) tuples for this phase
+            tuple: ((model_name, response), updated_messages) for this phase
         """
         self.current_phase = phase
         phase_messages = previous_messages.copy() if previous_messages else []
@@ -583,45 +584,36 @@ Maintain a helpful, precise, and professional tone at all times."""
             "content": f"Current phase: {phase.upper()}. Follow the guidelines for this phase only."
         })
         
-        # Randomly determine the order of AI models for this phase
-        model_order = list(range(len(self.models)))
-        random.shuffle(model_order)
+        # Get the model assigned to this phase
+        model = self.models[model_index]
+        print(f"\nGenerating {phase.upper()} response from {model.name}...")
         
-        responses = []
+        # Generate response
+        response = model.generate_response(phase_messages)
         
-        # Each AI takes a turn in this phase
-        for i, idx in enumerate(model_order):
-            model = self.models[idx]
-            print(f"\nGenerating {phase.upper()} response from {model.name}...")
-            
-            # Generate response
-            response = model.generate_response(phase_messages)
-            
-            # Format response with phase label if not already included
-            if phase == "propose" and "[제안]" not in response:
-                response = f"[제안]\n{response}"
-            elif phase == "critique" and "[피드백]" not in response:
-                response = f"[피드백]\n{response}"
-            elif phase == "synthesize" and "[최종안]" not in response:
-                response = f"[최종안]\n{response}"
-            
-            # Add model's response to messages
-            model_response = {
-                "role": model.name,
-                "content": response,
-                "phase": phase
-            }
-            
-            phase_messages.append(model_response)
-            self.messages.append(model_response)
-            
-            responses.append((model.name, response))
-            
-            # Print a preview of the response
-            preview = response[:100] + "..." if len(response) > 100 else response
-            print(f"{phase.upper()} response preview: {preview}")
+        # Format response with phase label if not already included
+        if phase == "propose" and "[제안]" not in response:
+            response = f"[제안]\n{response}"
+        elif phase == "critique" and "[피드백]" not in response:
+            response = f"[피드백]\n{response}"
+        elif phase == "synthesize" and "[최종안]" not in response:
+            response = f"[최종안]\n{response}"
         
-        return responses, phase_messages
+        # Add model's response to messages
+        model_response = {
+            "role": model.name,
+            "content": response,
+            "phase": phase
+        }
+        
+        phase_messages.append(model_response)
+        self.messages.append(model_response)
+        
+        # Print a preview of the response
+        preview = response[:100] + "..." if len(response) > 100 else response
+        print(f"{phase.upper()} response preview: {preview}")
+        
+        return (model.name, response), phase_messages
     
     def run_single_debate(self, topic):
         """
@@ -638,7 +630,7 @@ Maintain a helpful, precise, and professional tone at all times."""
 
     def run_debate_cycle(self, topic):
         """
-        Run a complete debate cycle with all three phases.
+        Run a complete debate cycle with each AI handling a specific phase.
         
         Args:
             topic (str): The debate topic or question
@@ -650,9 +642,9 @@ Maintain a helpful, precise, and professional tone at all times."""
         
         # Initialize cycle results
         cycle_results = {
-            "propose": [],
-            "critique": [],
-            "synthesize": []
+            "propose": None,
+            "critique": None,
+            "synthesize": None
         }
         
         # Reset messages for new cycle
@@ -667,22 +659,29 @@ Maintain a helpful, precise, and professional tone at all times."""
             "content": topic
         })
         
-        # Phase 1: Propose
+        # Ensure we have enough models for the 3 phases
+        if len(self.models) < 3:
+            print(f"Warning: Expected at least 3 models, but found {len(self.models)}. Using available models cyclically.")
+        
+        # Phase 1: Propose - Use first model
         print("\n=== PHASE 1: PROPOSE (제안) ===")
-        propose_results, propose_messages = self.run_phase("propose", topic)
-        cycle_results["propose"] = propose_results
+        model_index = 0 % len(self.models)  # Ensure index is valid
+        propose_result, propose_messages = self.run_phase("propose", model_index, topic)
+        cycle_results["propose"] = propose_result
         cumulative_messages = propose_messages
         
-        # Phase 2: Critique & Refine
+        # Phase 2: Critique & Refine - Use second model
         print("\n=== PHASE 2: CRITIQUE & REFINE (비판 및 개선) ===")
-        critique_results, critique_messages = self.run_phase("critique", previous_messages=cumulative_messages)
-        cycle_results["critique"] = critique_results
+        model_index = 1 % len(self.models)  # Ensure index is valid
+        critique_result, critique_messages = self.run_phase("critique", model_index, previous_messages=cumulative_messages)
+        cycle_results["critique"] = critique_result
         cumulative_messages = critique_messages
         
-        # Phase 3: Synthesize
+        # Phase 3: Synthesize - Use third model
         print("\n=== PHASE 3: SYNTHESIZE (종합) ===")
-        synthesize_results, synthesize_messages = self.run_phase("synthesize", previous_messages=cumulative_messages)
-        cycle_results["synthesize"] = synthesize_results
+        model_index = 2 % len(self.models)  # Ensure index is valid
+        synthesize_result, synthesize_messages = self.run_phase("synthesize", model_index, previous_messages=cumulative_messages)
+        cycle_results["synthesize"] = synthesize_result
         
         # Save the complete debate cycle to history
         self.history_manager.save_debate(self.session_id, self.messages)
@@ -696,6 +695,7 @@ Maintain a helpful, precise, and professional tone at all times."""
         print(f"AI Debate System (Session ID: {self.session_id})\n")
         print(f"Models loaded: {', '.join(model.name for model in self.models)}")
         print("The debate will follow three phases: Propose → Critique & Refine → Synthesize")
+        print("Each AI model will handle one specific phase in the cycle")
         print("Enter your question/topic or 'quit' to exit")
         
         while True:
@@ -715,11 +715,14 @@ Maintain a helpful, precise, and professional tone at all times."""
             print("\n=== DEBATE CYCLE SUMMARY ===")
             
             for phase in ["propose", "critique", "synthesize"]:
-                print(f"\n--- {phase.upper()} PHASE RESPONSES ---")
-                for model_name, response in cycle_results[phase]:
+                print(f"\n--- {phase.upper()} PHASE RESPONSE ---")
+                if cycle_results[phase]:
+                    model_name, response = cycle_results[phase]
                     print(f"\n{model_name}'s response:")
                     print(response)
                     print("-" * 40)
+                else:
+                    print("No response for this phase")
             
             print("\nDebate cycle complete. Enter a new topic or 'quit' to exit.")
 
