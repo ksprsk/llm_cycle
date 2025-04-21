@@ -444,7 +444,6 @@ class AIDebate:
         # If models not provided, load from config
         if not self.models:
             self.load_models_from_config(config_path)
-        
         # Base system prompt for all phases
         self.base_prompt = """You are an AI participating in a structured collaborative debate. 
 Follow the instructions for your current phase carefully."""
@@ -453,41 +452,49 @@ Follow the instructions for your current phase carefully."""
         self.phase_prompts = {
             "propose": """
 **Phase 1: Propose (제안)**
-* Offer 1-2 core ideas related to the given topic
-* Prioritize uniqueness – avoid repeating concepts already presented by others
-* Be concise (1-3 sentences per idea)
+* Generate as many simple ideas related to the topic as possible
+* Aim for quantity over depth - focus on breadth of potential solutions
+* Keep each idea very brief (1-2 sentences per idea)
+* Don't self-filter - include even partial or seemingly obvious ideas
+* Number your ideas clearly (#1, #2, etc.)
 * Label your response: `[제안]`
 
-Focus on contributing original, valuable ideas while being brief and clear.""",
+Focus on generating a large pool of initial ideas. Don't worry about quality yet - that comes in the next phase.""",
 
             "critique": """
-**Phase 2: Critique & Refine (비판 및 개선)**
-* Review proposals from OTHER participants only
-* Identify at least one specific flaw OR suggest a concrete improvement for another's idea
-* Be constructive and explain your reasoning briefly
-* Label your response: `[피드백]` (On [Target Idea/Participant], Critique/Suggestion: ...)
+**Phase 2: Critique & Filter (비판 및 선별)**
+* Review all proposals from Phase 1
+* Clearly identify which ideas should be kept vs. discarded
+* For each idea you recommend keeping:
+- Suggest one specific improvement
+- Explain why it's valuable (1-2 sentences)
+* Group similar ideas together when possible
+* Label your response: `[선별]` followed by "Keep: [list of idea numbers]" and "Discard: [list of idea numbers]"
 
-Focus on strengthening others' ideas through constructive criticism.""",
+Focus on filtering the pool of ideas to identify those with the most potential.""",
 
             "synthesize": """
 **Phase 3: Synthesize (종합)**
-* Based on the discussion in Phases 1 & 2, construct one concise, improved solution
-* Integrate the strongest points and refinements identified
-* Acknowledge core contributions briefly if feasible
+* Organize the filtered ideas into a coherent, structured solution
+* Create clear categories or sections if appropriate
+* Prioritize clarity and practicality in your presentation
+* Keep unnecessary explanation to a minimum
 * Label your response: `[최종안]`
 
-Focus on creating the most effective solution by combining the best elements from the previous phases."""
+Focus on creating an organized, actionable solution from the filtered ideas from Phase 2."""
         }
-        
+
         # Key rules to append to all phase prompts
         self.key_rules = """
 **Key Rules:**
-* Uniqueness: Strive for distinct contributions in each phase
-* Interaction: Phase 2 must engage with others' ideas
-* Brevity: Concise responses are highly valued - solutions that are twice as short may receive twice the score
+* Quantity: Phase 1 prioritizes generating many ideas
+* Quality: Phase 2 focuses on identifying the most promising ideas
+* Organization: Phase 3 structures these ideas into a coherent solution
+* Brevity: Concise responses are highly valued - avoid unnecessary explanation
 
 Maintain a helpful, precise, and professional tone at all times."""
-    
+
+
     def load_models_from_config(self, config_path):
         """
         Load AI models from configuration file.
