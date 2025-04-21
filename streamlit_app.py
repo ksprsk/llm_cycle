@@ -168,7 +168,7 @@ def search_debates():
             st.sidebar.write("No debates found matching your criteria.")
 
 
-def render_message(msg):
+def render_message(msg, index=None):
     """Render a message with appropriate styling"""
     role = msg.get("role")
     content = msg.get("content", "")
@@ -177,32 +177,42 @@ def render_message(msg):
         # Don't display system messages
         return
     
-    # 각 메시지를 컨테이너로 감싸고 복사 버튼 추가
-    with st.container():
-        # 헤더와 복사 버튼을 같은 줄에 표시
-        col1, col2 = st.columns([10, 1])
-        
-        with col1:
-            if role == "input":
-                st.markdown("### 🧑 User")
-            else:
-                st.markdown(f"### 🤖 {role}")
-        
-        with col2:
-            # 복사 버튼 (헤더 라인에 위치)
-            if st.button("📋", key=f"copy_{role}_{hash(content)}", help="Copy to clipboard"):
-                st.session_state.clipboard_content = content
-                st.session_state.last_copied = f"{role}_{hash(content)}"
-        
-        # 메시지 내용 표시
-        st.write(content)
-        
-        # 복사 성공 메시지 표시 (같은 메시지에 대해서만)
-        if hasattr(st.session_state, 'last_copied') and st.session_state.last_copied == f"{role}_{hash(content)}":
-            st.success("Copied to clipboard!")
-            # 실제 클립보드에 복사할 텍스트 영역 (사용자가 Ctrl+C로 복사할 수 있음)
-            st.text_area("", value=st.session_state.clipboard_content, key=f"copy_area_{hash(content)}", 
-                        height=0, label_visibility="collapsed")
+    # Message header with copy/delete buttons
+    col1, col2, col3 = st.columns([9, 1, 1])
+    
+    with col1:
+        if role == "input":
+            st.markdown("### 🧑 User")
+        else:
+            st.markdown(f"### 🤖 {role}")
+    
+    with col2:
+        # Copy button
+        if st.button("📋", key=f"copy_msg_{index if index is not None else hash(content)}", help="Copy to clipboard"):
+            # Store content to be copied
+            st.session_state["copy_content"] = content
+            st.session_state["show_copy_area"] = True
+            st.rerun()
+    
+    if index is not None:  # Only show delete button if index is provided
+        with col3:
+            # Delete button
+            if st.button("🗑️", key=f"delete_msg_{index}", help="Delete message"):
+                if st.session_state.history_manager.delete_message(
+                    st.session_state.current_session_id, index
+                ):
+                    # Remove from current display
+                    st.session_state.messages.pop(index)
+                    # Update debate object
+                    if st.session_state.debate:
+                        st.session_state.debate.messages = st.session_state.messages.copy()
+                    st.success("Message deleted")
+                    st.rerun()
+                else:
+                    st.error("Failed to delete message")
+    
+    # Display message content
+    st.write(content)
     
     # Add a separator
     st.markdown("---")
@@ -212,12 +222,33 @@ def main():
     # Title
     st.title("AI Debate System")
 
+    # Initialize session state for copy functionality
+    if "copy_content" not in st.session_state:
+        st.session_state["copy_content"] = ""
+    if "show_copy_area" not in st.session_state:
+        st.session_state["show_copy_area"] = False
+
     # Check if we need to load a debate from a previous click
     if st.session_state.load_filepath:
         success = load_debate_session()
         if success:
             st.success(f"Loaded debate session!")
             st.rerun()
+
+    # Display copy area in sidebar if needed
+    if st.session_state["show_copy_area"]:
+        with st.sidebar:
+            st.markdown("## 📋 Copy Text")
+            st.info("1. Select all text (Ctrl+A)  \n2. Copy to clipboard (Ctrl+C)")
+            st.text_area(
+                "Copy this text:", 
+                value=st.session_state["copy_content"],
+                height=200,
+                key="copy_text_area"
+            )
+            if st.button("Close"):
+                st.session_state["show_copy_area"] = False
+                st.rerun()
 
     # Sidebar
     st.sidebar.title("Controls")
@@ -238,14 +269,14 @@ def main():
         initialize_debate(st.session_state.config_path)
         st.rerun()
 
-    # 대화 기록 관리
+    # Debate history management
     st.sidebar.markdown("## Debate History")
 
-    # 기록 접근 방식을 위한 탭 생성
+    # Tabs for accessing history
     tab1, tab2 = st.sidebar.tabs(["Recent Debates", "Search"])
 
     with tab1:
-        # 시간순 대화 목록 표시
+        # Show debates in chronological order
         if "recent_debates" not in st.session_state:
             st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
 
@@ -253,7 +284,7 @@ def main():
             st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
             st.rerun()
 
-        # Updated to handle the new tuple structure (filepath, session_id, created, updated, preview)
+        # Handle debate list
         for i, debate_info in enumerate(st.session_state.recent_debates):
             # Handle both old and new formats
             if len(debate_info) == 5:
@@ -288,44 +319,24 @@ def main():
                             st.error("Failed to delete debate")
 
     with tab2:
-        # 검색 기능
+        # Search functionality
         search_debates()
 
-    # 메인 컨텐츠 영역
+    # Main content area
     if st.session_state.debate_running:
-        # 현재 세션 ID 표시
+        # Display current session ID
         st.caption(f"Session ID: {st.session_state.current_session_id}")
 
-        # 로드된 모델 표시
+        # Show loaded models
         if st.session_state.debate:
             model_names = [model.name for model in st.session_state.debate.models]
             st.write(f"Loaded models: {', '.join(model_names)}")
 
-        # 삭제 버튼과 함께 메시지 표시
+        # Display messages
         for i, msg in enumerate(st.session_state.messages):
-            with st.container():
-                col1, col2 = st.columns([10, 1])
-
-                with col1:
-                    render_message(msg)
-
-                with col2:
-                    # 시스템 메시지가 아닌 경우에만 삭제 버튼 표시
-                    if msg.get("role") != "system":
-                        if st.button("🗑️", key=f"delete_msg_{i}"):
-                            # 메시지 삭제
-                            if st.session_state.history_manager.delete_message(
-                                st.session_state.current_session_id, i
-                            ):
-                                # 현재 표시에서 제거
-                                st.session_state.messages.pop(i)
-                                # debate 객체도 업데이트
-                                if st.session_state.debate:
-                                    st.session_state.debate.messages = st.session_state.messages.copy()
-                                st.success("Message deleted")
-                                st.rerun()
-                            else:
-                                st.error("Failed to delete message")
+            if msg.get("role") != "system":  # Don't display system messages
+                with st.container():
+                    render_message(msg, index=i)
 
         # Snapshot button
         if st.button("Create Snapshot"):
@@ -336,7 +347,7 @@ def main():
                 else:
                     st.error("Failed to create snapshot")
 
-        # 입력 영역
+        # Input area
         user_input = st.text_area("Enter your question:", height=100)
         col1, col2 = st.columns([1, 5])
         with col1:
@@ -345,10 +356,10 @@ def main():
                     run_debate_round(user_input)
                     st.rerun()
     else:
-        # 활성화된 대화가 없는 경우
+        # No active debate
         st.info("Start a new debate or load an existing one from the sidebar.")
 
-        # 빠른 시작 옵션
+        # Quick start options
         sample_questions = [
             "How can we solve climate change?",
             "What's the best way to learn a new language?",
