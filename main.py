@@ -108,14 +108,13 @@ class HistoryManager:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True, parents=True)
 
-    def save_debate(self, session_id, messages, overwrite_existing=True):
+    def save_debate(self, session_id, messages):
         """
-        Save a debate session to a file, optionally updating an existing file.
+        Save a debate session to a file.
 
         Args:
             session_id (str): Unique identifier for the session
-            messages (list): Conversation messages
-            overwrite_existing (bool): Whether to update existing file or create new
+            messages (list): Full conversation messages
 
         Returns:
             str: Path to the saved file
@@ -124,31 +123,24 @@ class HistoryManager:
         session_dir = self.base_dir / session_id
         session_dir.mkdir(exist_ok=True, parents=True)
         
-        # Current timestamp
+        # Create standard filename for the session
+        filename = f"session_{session_id}.json"
+        filepath = session_dir / filename
+        
+        # Get current timestamp
         timestamp = datetime.datetime.now().isoformat()
         
-        if overwrite_existing:
-            # Default filename for the session
-            filename = f"session_{session_id}.json"
-            filepath = session_dir / filename
-            
-            # Check if file exists to preserve creation timestamp
-            created_timestamp = timestamp
-            if filepath.exists():
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        existing_data = json.load(f)
-                        created_timestamp = existing_data.get("created_timestamp", timestamp)
-                except:
-                    pass  # If reading fails, use current timestamp as creation time
-        else:
-            # Create a timestamp-based filename for backups/snapshots
-            timestamp_filename = timestamp.replace(':', '-')
-            filename = f"{timestamp_filename}.json"
-            filepath = session_dir / filename
-            created_timestamp = timestamp
+        # If file exists, read it to preserve creation timestamp
+        created_timestamp = timestamp
+        if filepath.exists():
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    created_timestamp = existing_data.get("created_timestamp", timestamp)
+            except:
+                pass  # If reading fails, use current timestamp
         
-        # Store data with creation and update timestamps
+        # Store data with timestamps
         data = {
             "session_id": session_id,
             "created_timestamp": created_timestamp,
@@ -180,13 +172,16 @@ class HistoryManager:
         try:
             with open(session_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
-            # Create a backup with timestamp (don't overwrite)
-            return self.save_debate(
-                session_id=session_id,
-                messages=data.get("messages", []),
-                overwrite_existing=False
-            )
+            
+            # Create timestamp filename for snapshot
+            timestamp = datetime.datetime.now().isoformat().replace(':', '-')
+            snapshot_file = session_dir / f"snapshot_{timestamp}.json"
+            
+            # Write the snapshot
+            with open(snapshot_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            return str(snapshot_file)
         except Exception as e:
             print(f"Error creating snapshot: {e}")
             return None
@@ -293,13 +288,13 @@ class HistoryManager:
     
     def list_all_debates(self, limit=50):
         """
-        List all debate sessions (one entry per session).
+        List all debate sessions (one per session).
 
         Args:
             limit (int, optional): Maximum number of sessions to return
 
         Returns:
-            list: (filepath, session_id, timestamp, preview) tuples
+            list: (filepath, session_id, created, updated, preview) tuples
         """
         all_debates = []
         
@@ -310,25 +305,25 @@ class HistoryManager:
                 
             session_id = session_dir.name
             
-            # Try to find the main session file first
+            # First try to find the main session file
             main_file = session_dir / f"session_{session_id}.json"
             
             if main_file.exists():
                 debate_file = main_file
             else:
                 # Find most recent file if no main file
-                all_files = list(session_dir.glob("*.json"))
-                if not all_files:
+                files = list(session_dir.glob("*.json"))
+                if not files:
                     continue
-                debate_file = max(all_files, key=lambda f: f.stat().st_mtime)
+                debate_file = max(files, key=lambda f: f.stat().st_mtime)
             
             try:
                 with open(debate_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                # Use last_updated as timestamp
-                timestamp = data.get('last_updated', data.get('timestamp', ''))
-                created = data.get('created_timestamp', timestamp)
+                # Get timestamps
+                updated = data.get('last_updated', data.get('timestamp', ''))
+                created = data.get('created_timestamp', updated)
                 
                 # Get first user input as preview
                 preview = "N/A"
@@ -339,10 +334,10 @@ class HistoryManager:
                 
                 # Parse timestamp for sorting
                 try:
-                    dt = datetime.datetime.fromisoformat(timestamp)
+                    dt = datetime.datetime.fromisoformat(updated)
                 except ValueError:
                     # Handle old format if needed
-                    parts = timestamp.split('T')
+                    parts = updated.split('T')
                     if len(parts) == 2:
                         date_part = parts[0]
                         time_part = parts[1].replace('-', ':')
@@ -350,7 +345,7 @@ class HistoryManager:
                     else:
                         dt = datetime.datetime.min
                 
-                all_debates.append((str(debate_file), session_id, created, timestamp, preview, dt))
+                all_debates.append((str(debate_file), session_id, created, updated, preview, dt))
             except Exception as e:
                 print(f"Error loading debate file {debate_file}: {e}")
         
@@ -359,6 +354,7 @@ class HistoryManager:
         
         # Return without datetime object
         return [(path, sid, created, updated, prev) for path, sid, created, updated, prev, _ in all_debates[:limit]]
+
 
     def delete_message(self, session_id, message_index):
         """

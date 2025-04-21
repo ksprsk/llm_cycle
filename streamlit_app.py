@@ -76,7 +76,6 @@ def run_debate_round(user_input):
     # Run the debate round
     with st.spinner("AIs are thinking..."):
         try:
-            # First try the run_single_debate method (after we add it)
             responses = st.session_state.debate.run_single_debate(user_input)
         except AttributeError:
             # Fallback to run_debate_cycle if run_single_debate doesn't exist
