@@ -188,17 +188,17 @@ def render_message(msg):
 def main():
     # Title
     st.title("AI Debate System")
-    
+
     # Check if we need to load a debate from a previous click
     if st.session_state.load_filepath:
         success = load_debate_session()
         if success:
             st.success(f"Loaded debate session!")
             st.rerun()
-    
+
     # Sidebar
     st.sidebar.title("Controls")
-    
+
     # Config selection
     config_files = list(Path(".").glob("*.json"))
     config_options = [f.name for f in config_files]
@@ -209,31 +209,85 @@ def main():
             index=config_options.index("config.json") if "config.json" in config_options else 0
         )
         st.session_state.config_path = selected_config
-    
+
     # New debate button
     if st.sidebar.button("Start New Debate"):
         initialize_debate(st.session_state.config_path)
         st.rerun()
+
+    # 대화 기록 관리
+    st.sidebar.markdown("## Debate History")
     
-    # Search functionality
-    st.sidebar.markdown("## Search Previous Debates")
-    search_debates()
+    # 기록 접근 방식을 위한 탭 생성
+    tab1, tab2 = st.sidebar.tabs(["Recent Debates", "Search"])
     
-    # Main content area
-    if st.session_state.debate_running:
-        # Display current session ID
-        st.caption(f"Session ID: {st.session_state.current_session_id}")
+    with tab1:
+        # 시간순 대화 목록 표시
+        if "recent_debates" not in st.session_state:
+            st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
         
-        # Display loaded models
+        if st.button("Refresh List", key="refresh_recent"):
+            st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
+            st.rerun()
+        
+        for i, (filepath, session_id, timestamp, preview) in enumerate(st.session_state.recent_debates):
+            with st.expander(f"{timestamp} - {preview[:30]}..."):
+                st.write(f"Session ID: {session_id}")
+                st.write(f"Preview: {preview}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Load", key=f"load_recent_{i}", on_click=set_load_filepath, args=(filepath,)):
+                        pass
+                with col2:
+                    if st.button("Delete", key=f"delete_recent_{i}"):
+                        if st.session_state.history_manager.delete_debate_file(filepath):
+                            st.success("Debate deleted")
+                            st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete debate")
+    
+    with tab2:
+        # 검색 기능
+        search_debates()
+
+    # 메인 컨텐츠 영역
+    if st.session_state.debate_running:
+        # 현재 세션 ID 표시
+        st.caption(f"Session ID: {st.session_state.current_session_id}")
+
+        # 로드된 모델 표시
         if st.session_state.debate:
             model_names = [model.name for model in st.session_state.debate.models]
             st.write(f"Loaded models: {', '.join(model_names)}")
-        
-        # Display messages
-        for msg in st.session_state.messages:
-            render_message(msg)
-        
-        # Input area
+
+        # 삭제 버튼과 함께 메시지 표시
+        for i, msg in enumerate(st.session_state.messages):
+            with st.container():
+                col1, col2 = st.columns([10, 1])
+                
+                with col1:
+                    render_message(msg)
+                
+                with col2:
+                    # 시스템 메시지가 아닌 경우에만 삭제 버튼 표시
+                    if msg.get("role") != "system":
+                        if st.button("🗑️", key=f"delete_msg_{i}"):
+                            # 메시지 삭제
+                            if st.session_state.history_manager.delete_message(
+                                st.session_state.current_session_id, i
+                            ):
+                                # 현재 표시에서 제거
+                                st.session_state.messages.pop(i)
+                                # debate 객체도 업데이트
+                                if st.session_state.debate:
+                                    st.session_state.debate.messages = st.session_state.messages.copy()
+                                st.success("Message deleted")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete message")
+
+        # 입력 영역
         user_input = st.text_area("Enter your question:", height=100)
         col1, col2 = st.columns([1, 5])
         with col1:
@@ -242,20 +296,20 @@ def main():
                     run_debate_round(user_input)
                     st.rerun()
     else:
-        # No active debate
+        # 활성화된 대화가 없는 경우
         st.info("Start a new debate or load an existing one from the sidebar.")
-        
-        # Quick start option
+
+        # 빠른 시작 옵션
         sample_questions = [
             "How can we solve climate change?",
             "What's the best way to learn a new language?",
             "Explain the concept of quantum computing.",
             "Design a smart city of the future."
         ]
-        
+
         st.write("### Quick Start")
         st.write("Select a sample question to begin:")
-        
+
         cols = st.columns(2)
         for i, question in enumerate(sample_questions):
             with cols[i % 2]:
