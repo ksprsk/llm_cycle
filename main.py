@@ -101,42 +101,58 @@ class HistoryManager:
     def __init__(self, base_dir="debate_history"):
         """
         Initialize a manager for debate history.
-        
+
         Args:
             base_dir (str): Base directory for storing debate history
         """
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True, parents=True)
-    
-    def save_debate(self, session_id, messages):
+
+    def save_debate(self, session_id, messages, overwrite_existing=True):
         """
-        Save a debate session to a file.
-        
+        Save a debate session to a file, optionally updating an existing file.
+
         Args:
             session_id (str): Unique identifier for the session
-            messages (list): Full conversation messages
-        
+            messages (list): Conversation messages
+            overwrite_existing (bool): Whether to update existing file or create new
+
         Returns:
             str: Path to the saved file
         """
-        # Generate proper ISO format timestamp
-        timestamp_original = datetime.datetime.now().isoformat()
-        
-        # Create file-safe version for the filename
-        timestamp_filename = timestamp_original.replace(':', '-')
-        
         # Create the session directory
         session_dir = self.base_dir / session_id
         session_dir.mkdir(exist_ok=True, parents=True)
         
-        # Set filename using the file-safe version
-        filename = f"{timestamp_filename}.json"
-        filepath = session_dir / filename
+        # Current timestamp
+        timestamp = datetime.datetime.now().isoformat()
         
-        # Store data with the original ISO format timestamp
+        if overwrite_existing:
+            # Default filename for the session
+            filename = f"session_{session_id}.json"
+            filepath = session_dir / filename
+            
+            # Check if file exists to preserve creation timestamp
+            created_timestamp = timestamp
+            if filepath.exists():
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                        created_timestamp = existing_data.get("created_timestamp", timestamp)
+                except:
+                    pass  # If reading fails, use current timestamp as creation time
+        else:
+            # Create a timestamp-based filename for backups/snapshots
+            timestamp_filename = timestamp.replace(':', '-')
+            filename = f"{timestamp_filename}.json"
+            filepath = session_dir / filename
+            created_timestamp = timestamp
+        
+        # Store data with creation and update timestamps
         data = {
             "session_id": session_id,
-            "timestamp": timestamp_original,  # Store original ISO format
+            "created_timestamp": created_timestamp,
+            "last_updated": timestamp,
             "messages": messages
         }
         
@@ -144,6 +160,49 @@ class HistoryManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         return str(filepath)
+    
+    def create_snapshot(self, session_id):
+        """
+        Create a timestamped snapshot of the current session.
+        
+        Args:
+            session_id (str): Session ID to snapshot
+            
+        Returns:
+            str or None: Path to snapshot file or None if session not found
+        """
+        session_dir = self.base_dir / session_id
+        session_file = session_dir / f"session_{session_id}.json"
+        
+        if not session_file.exists():
+            return None
+            
+        try:
+            with open(session_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            # Create a backup with timestamp (don't overwrite)
+            return self.save_debate(
+                session_id=session_id,
+                messages=data.get("messages", []),
+                overwrite_existing=False
+            )
+        except Exception as e:
+            print(f"Error creating snapshot: {e}")
+            return None
+
+    def load_debate(self, filepath):
+        """
+        Load a debate from a file.
+
+        Args:
+            filepath (str or Path): Path to the debate file
+
+        Returns:
+            dict: Debate data
+        """
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
 
     def search_debates(self, keyword=None, start_date=None, end_date=None):
         """
@@ -157,7 +216,7 @@ class HistoryManager:
         Returns:
             list: List of filepaths to matching debate files
         """
-        results = set()  # 중복 방지를 위해 set 사용
+        results = set()  # Use set to prevent duplicates
 
         # Convert date strings to datetime objects if provided
         start_dt = None
@@ -175,158 +234,168 @@ class HistoryManager:
             if not session_dir.is_dir():
                 continue
 
-            # Iterate through all debate files in the session
-            for debate_file in session_dir.glob("*.json"):
+            # For each session, prioritize the main session file
+            main_file = session_dir / f"session_{session_dir.name}.json"
+            files_to_check = []
+            
+            if main_file.exists():
+                files_to_check.append(main_file)
+            else:
+                # If no main file exists, check all JSON files
+                files_to_check.extend(session_dir.glob("*.json"))
+            
+            for debate_file in files_to_check:
                 str_path = str(debate_file)
-                
-                # 이미 결과에 있으면 건너뛰기
                 if str_path in results:
                     continue
-                    
-                # 날짜 범위 검사
-                if start_dt or end_dt:
-                    try:
-                        with open(debate_file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            timestamp = data.get('timestamp', '')
 
-                        if timestamp:
-                            try:
-                                file_dt = datetime.datetime.fromisoformat(timestamp)
-                            except ValueError:
-                                parts = timestamp.split('T')
-                                if len(parts) == 2:
-                                    date_part = parts[0]
-                                    time_part = parts[1].replace('-', ':')
-                                    file_dt = datetime.datetime.fromisoformat(f"{date_part}T{time_part}")
-                                else:
-                                    raise ValueError(f"Cannot parse timestamp: {timestamp}")
-
-                            if start_dt and file_dt < start_dt:
-                                continue
-                            if end_dt and file_dt > end_dt:
-                                continue
-                    except Exception as e:
-                        print(f"Error parsing timestamp for {debate_file}: {e}")
-                        continue
-
-                # 키워드 검사
-                if keyword:
-                    try:
-                        debate_data = self.load_debate(debate_file)
-                        found = False
-                        for msg in debate_data.get("messages", []):
-                            if keyword.lower() in msg.get("content", "").lower():
-                                found = True
-                                break
-
-                        if not found:
-                            continue
-
-                    except Exception as e:
-                        print(f"Error searching content for {debate_file}: {e}")
-                        continue
-
-                results.add(str_path)
-
-        return list(results)  # set을 list로 변환하여 반환
-    
-    def list_all_debates(self, limit=50):
-        """
-        List all debate sessions in chronological order (newest first).
-
-        Args:
-            limit (int, optional): 반환할 세션의 최대 개수
-
-        Returns:
-            list: (filepath, session_id, timestamp, preview) 튜플의 리스트
-        """
-        all_debates = []
-
-        # 모든 세션 디렉토리 순회
-        for session_dir in self.base_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
-
-            session_id = session_dir.name
-
-            # 세션 내 모든 대화 파일 순회
-            for debate_file in session_dir.glob("*.json"):
                 try:
-                    # 파일 로드
                     with open(debate_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     
-                    timestamp = data.get('timestamp', '')
+                    # Check date range using last_updated field
+                    timestamp = data.get('last_updated', data.get('timestamp', ''))
                     
-                    # 첫 사용자 입력을 미리보기로 사용
-                    preview = "N/A"
-                    for msg in data.get("messages", []):
-                        if msg.get("role") == "input":
-                            preview = msg.get("content", "")[:100]
-                            break
-                    
-                    # 정렬을 위해 타임스탬프 파싱
-                    try:
-                        dt = datetime.datetime.fromisoformat(timestamp)
-                    except ValueError:
-                        # 오래된 형식 처리
-                        parts = timestamp.split('T')
-                        if len(parts) == 2:
-                            date_part = parts[0]
-                            time_part = parts[1].replace('-', ':')
-                            dt = datetime.datetime.fromisoformat(f"{date_part}T{time_part}")
-                        else:
-                            dt = datetime.datetime.min
-                    
-                    all_debates.append((str(debate_file), session_id, timestamp, preview, dt))
+                    if timestamp:
+                        try:
+                            file_dt = datetime.datetime.fromisoformat(timestamp)
+                        except ValueError:
+                            # Handle old format if needed
+                            parts = timestamp.split('T')
+                            if len(parts) == 2:
+                                date_part = parts[0]
+                                time_part = parts[1].replace('-', ':')
+                                file_dt = datetime.datetime.fromisoformat(f"{date_part}T{time_part}")
+                            else:
+                                raise ValueError(f"Cannot parse timestamp: {timestamp}")
+
+                        if start_dt and file_dt < start_dt:
+                            continue
+                        if end_dt and file_dt > end_dt:
+                            continue
+                        
+                    # Keyword check
+                    if keyword:
+                        found = False
+                        for msg in data.get("messages", []):
+                            if keyword.lower() in msg.get("content", "").lower():
+                                found = True
+                                break
+                        
+                        if not found:
+                            continue
+                            
+                    results.add(str_path)
                 except Exception as e:
-                    print(f"Error loading debate file {debate_file}: {e}")
-        
-        # 타임스탬프로 정렬 (최신순)
-        all_debates.sort(key=lambda x: x[4], reverse=True)
-        
-        # 정렬에 사용된 datetime 객체 없이 결과 반환
-        return [(path, sid, ts, prev) for path, sid, ts, prev, _ in all_debates[:limit]]
+                    print(f"Error checking file {debate_file}: {e}")
+                    
+        return list(results)
     
-    def delete_message(self, session_id, message_index):
+    def list_all_debates(self, limit=50):
         """
-        Delete a specific message from the most recent debate file in a session.
+        List all debate sessions (one entry per session).
 
         Args:
-            session_id (str): 세션 ID
-            message_index (int): 삭제할 메시지의 인덱스
+            limit (int, optional): Maximum number of sessions to return
 
         Returns:
-            bool: 성공 시 True, 실패 시 False
+            list: (filepath, session_id, timestamp, preview) tuples
+        """
+        all_debates = []
+        
+        # Iterate through all session directories
+        for session_dir in self.base_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+                
+            session_id = session_dir.name
+            
+            # Try to find the main session file first
+            main_file = session_dir / f"session_{session_id}.json"
+            
+            if main_file.exists():
+                debate_file = main_file
+            else:
+                # Find most recent file if no main file
+                all_files = list(session_dir.glob("*.json"))
+                if not all_files:
+                    continue
+                debate_file = max(all_files, key=lambda f: f.stat().st_mtime)
+            
+            try:
+                with open(debate_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # Use last_updated as timestamp
+                timestamp = data.get('last_updated', data.get('timestamp', ''))
+                created = data.get('created_timestamp', timestamp)
+                
+                # Get first user input as preview
+                preview = "N/A"
+                for msg in data.get("messages", []):
+                    if msg.get("role") == "input":
+                        preview = msg.get("content", "")[:100]
+                        break
+                
+                # Parse timestamp for sorting
+                try:
+                    dt = datetime.datetime.fromisoformat(timestamp)
+                except ValueError:
+                    # Handle old format if needed
+                    parts = timestamp.split('T')
+                    if len(parts) == 2:
+                        date_part = parts[0]
+                        time_part = parts[1].replace('-', ':')
+                        dt = datetime.datetime.fromisoformat(f"{date_part}T{time_part}")
+                    else:
+                        dt = datetime.datetime.min
+                
+                all_debates.append((str(debate_file), session_id, created, timestamp, preview, dt))
+            except Exception as e:
+                print(f"Error loading debate file {debate_file}: {e}")
+        
+        # Sort by timestamp (newest first)
+        all_debates.sort(key=lambda x: x[5], reverse=True)
+        
+        # Return without datetime object
+        return [(path, sid, created, updated, prev) for path, sid, created, updated, prev, _ in all_debates[:limit]]
+
+    def delete_message(self, session_id, message_index):
+        """
+        Delete a specific message from the session file.
+
+        Args:
+            session_id (str): Session ID
+            message_index (int): Index of message to delete
+
+        Returns:
+            bool: Success or failure
         """
         session_dir = self.base_dir / session_id
-        if not session_dir.exists() or not session_dir.is_dir():
-            return False
+        session_file = session_dir / f"session_{session_id}.json"
         
-        # 가장 최근 대화 파일 찾기
-        debate_files = list(session_dir.glob("*.json"))
-        if not debate_files:
-            return False
-        
-        # 수정 시간순으로 정렬 (최신순)
-        debate_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-        latest_file = debate_files[0]
+        if not session_file.exists():
+            # Try to find most recent file
+            files = list(session_dir.glob("*.json"))
+            if not files:
+                return False
+            session_file = max(files, key=lambda f: f.stat().st_mtime)
         
         try:
-            # 대화 로드
-            with open(latest_file, 'r', encoding='utf-8') as f:
+            # Load debate data
+            with open(session_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # 메시지 인덱스 유효성 확인
+            # Check message index
             if message_index < 0 or message_index >= len(data.get("messages", [])):
                 return False
             
-            # 메시지 제거
+            # Remove message
             data["messages"].pop(message_index)
+            data["last_updated"] = datetime.datetime.now().isoformat()
             
-            # 업데이트된 파일 저장
-            with open(latest_file, 'w', encoding='utf-8') as f:
+            # Save updated file
+            with open(session_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
             return True
@@ -339,28 +408,27 @@ class HistoryManager:
         Delete a specific debate file.
 
         Args:
-            filepath (str): 삭제할 대화 파일 경로
+            filepath (str): Path to file to delete
 
         Returns:
-            bool: 성공 시 True, 실패 시 False
+            bool: Success or failure
         """
         try:
             path = Path(filepath)
             if path.exists() and path.is_file():
                 path.unlink()
                 
-                # 디렉토리가 비어있으면 제거
+                # Remove directory if empty
                 parent_dir = path.parent
                 if not any(parent_dir.iterdir()):
                     parent_dir.rmdir()
-                    
+                
                 return True
             return False
         except Exception as e:
             print(f"Error deleting debate file: {e}")
             return False
-
-
+        
 class AIDebate:
     def __init__(self, models=None, config_path="config.json"):
         """
@@ -559,6 +627,19 @@ Maintain a helpful, precise, and professional tone at all times."""
         
         return responses, phase_messages
     
+    def run_single_debate(self, topic):
+        """
+        Run a single debate cycle with the given topic.
+        This is a wrapper around run_debate_cycle for Streamlit app compatibility.
+        
+        Args:
+            topic (str): The debate topic or question
+            
+        Returns:
+            dict: Responses from each phase of the debate
+        """
+        return self.run_debate_cycle(topic)
+
     def run_debate_cycle(self, topic):
         """
         Run a complete debate cycle with all three phases.

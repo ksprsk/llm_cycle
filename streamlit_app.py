@@ -66,17 +66,22 @@ def run_debate_round(user_input):
     """Run a single debate round and update UI"""
     if not st.session_state.debate:
         initialize_debate(st.session_state.config_path)
-    
+
     # Add user input to messages for display
     st.session_state.messages.append({
         "role": "input",
         "content": user_input
     })
-    
+
     # Run the debate round
     with st.spinner("AIs are thinking..."):
-        responses = st.session_state.debate.run_single_debate(user_input)
-    
+        try:
+            # First try the run_single_debate method (after we add it)
+            responses = st.session_state.debate.run_single_debate(user_input)
+        except AttributeError:
+            # Fallback to run_debate_cycle if run_single_debate doesn't exist
+            responses = st.session_state.debate.run_debate_cycle(user_input)
+
     # Update our copy of messages
     st.session_state.messages = st.session_state.debate.messages.copy()
 
@@ -217,23 +222,40 @@ def main():
 
     # 대화 기록 관리
     st.sidebar.markdown("## Debate History")
-    
+
     # 기록 접근 방식을 위한 탭 생성
     tab1, tab2 = st.sidebar.tabs(["Recent Debates", "Search"])
-    
+
     with tab1:
         # 시간순 대화 목록 표시
         if "recent_debates" not in st.session_state:
             st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
-        
+
         if st.button("Refresh List", key="refresh_recent"):
             st.session_state.recent_debates = st.session_state.history_manager.list_all_debates(limit=10)
             st.rerun()
-        
-        for i, (filepath, session_id, timestamp, preview) in enumerate(st.session_state.recent_debates):
-            with st.expander(f"{timestamp} - {preview[:30]}..."):
+
+        # Updated to handle the new tuple structure (filepath, session_id, created, updated, preview)
+        for i, debate_info in enumerate(st.session_state.recent_debates):
+            # Handle both old and new formats
+            if len(debate_info) == 5:
+                filepath, session_id, created, updated, preview = debate_info
+                display_time = updated  # Use last updated time for display
+            else:
+                # Fallback for old format
+                filepath, session_id, timestamp, preview = debate_info
+                display_time = timestamp
+                created = timestamp
+
+            with st.expander(f"{display_time} - {preview[:30]}..."):
                 st.write(f"Session ID: {session_id}")
+                if created != display_time:
+                    st.write(f"Created: {created}")
+                    st.write(f"Last updated: {display_time}")
+                else:
+                    st.write(f"Timestamp: {display_time}")
                 st.write(f"Preview: {preview}")
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("Load", key=f"load_recent_{i}", on_click=set_load_filepath, args=(filepath,)):
@@ -246,7 +268,7 @@ def main():
                             st.rerun()
                         else:
                             st.error("Failed to delete debate")
-    
+
     with tab2:
         # 검색 기능
         search_debates()
@@ -265,10 +287,10 @@ def main():
         for i, msg in enumerate(st.session_state.messages):
             with st.container():
                 col1, col2 = st.columns([10, 1])
-                
+
                 with col1:
                     render_message(msg)
-                
+
                 with col2:
                     # 시스템 메시지가 아닌 경우에만 삭제 버튼 표시
                     if msg.get("role") != "system":
@@ -286,6 +308,15 @@ def main():
                                 st.rerun()
                             else:
                                 st.error("Failed to delete message")
+
+        # Snapshot button
+        if st.button("Create Snapshot"):
+            if st.session_state.debate and st.session_state.current_session_id:
+                snapshot_path = st.session_state.history_manager.create_snapshot(st.session_state.current_session_id)
+                if snapshot_path:
+                    st.success(f"Created debate snapshot")
+                else:
+                    st.error("Failed to create snapshot")
 
         # 입력 영역
         user_input = st.text_area("Enter your question:", height=100)
@@ -317,7 +348,6 @@ def main():
                     initialize_debate(st.session_state.config_path)
                     run_debate_round(question)
                     st.rerun()
-
 
 if __name__ == "__main__":
     main()
