@@ -638,60 +638,78 @@ Maintain a helpful, precise, and professional tone at all times."""
     def run_debate_cycle(self, topic):
         """
         Run a complete debate cycle with each AI handling a specific phase.
-        
+        Maintains context from previous cycles.
+
         Args:
             topic (str): The debate topic or question
-            
+
         Returns:
             dict: Responses from each phase of the debate
         """
         print(f"\n=== Starting New Debate Cycle on: {topic} ===\n")
-        
+
         # Initialize cycle results
         cycle_results = {
             "propose": None,
             "critique": None,
             "synthesize": None
         }
-        
-        # Store cumulative messages from all phases
-        cumulative_messages = []
+
+        # Check if this is a continuation or a new session
+        is_continuation = len(self.messages) > 0
         
         # Add user input to messages
-        self.messages.append({
+        input_message = {
             "role": "input",
             "content": topic
-        })
+        }
+        self.messages.append(input_message)
+        
+        # Initialize cumulative_messages with all prior history
+        cumulative_messages = self.messages.copy()
         
         # Ensure we have enough models for the 3 phases
         if len(self.models) < 3:
             print(f"Warning: Expected at least 3 models, but found {len(self.models)}. Using available models cyclically.")
-        
+
+        # Add context marker for continuation if this isn't the first topic
+        if is_continuation:
+            context_message = {
+                "role": "system",
+                "content": "This is a continuation of the previous debate. Consider all previous context when responding."
+            }
+            cumulative_messages.append(context_message)
+            print("Continuing previous debate with new topic...")
+
         # Phase 1: Propose - Use first model
         print("\n=== PHASE 1: PROPOSE (제안) ===")
         model_index = 0 % len(self.models)  # Ensure index is valid
-        propose_result, propose_messages = self.run_phase("propose", model_index, topic)
+        propose_result, propose_messages = self.run_phase("propose", model_index, topic, cumulative_messages)
         cycle_results["propose"] = propose_result
-        cumulative_messages = propose_messages
         
+        # Update cumulative messages with propose phase results
+        cumulative_messages = propose_messages
+
         # Phase 2: Critique & Refine - Use second model
         print("\n=== PHASE 2: CRITIQUE & REFINE (비판 및 개선) ===")
         model_index = 1 % len(self.models)  # Ensure index is valid
         critique_result, critique_messages = self.run_phase("critique", model_index, previous_messages=cumulative_messages)
         cycle_results["critique"] = critique_result
-        cumulative_messages = critique_messages
         
+        # Update cumulative messages with critique phase results
+        cumulative_messages = critique_messages
+
         # Phase 3: Synthesize - Use third model
         print("\n=== PHASE 3: SYNTHESIZE (종합) ===")
         model_index = 2 % len(self.models)  # Ensure index is valid
         synthesize_result, synthesize_messages = self.run_phase("synthesize", model_index, previous_messages=cumulative_messages)
         cycle_results["synthesize"] = synthesize_result
-        
+
         # Save the complete debate cycle to history
         self.history_manager.save_debate(self.session_id, self.messages)
-        
+
         return cycle_results
-    
+
     def run_interactive(self):
         """
         Run an interactive debate session with complete cycles based on user input.
