@@ -177,13 +177,32 @@ def render_message(msg):
         # Don't display system messages
         return
     
-    if role == "input":
-        st.markdown("### 🧑 User")
+    # 각 메시지를 컨테이너로 감싸고 복사 버튼 추가
+    with st.container():
+        # 헤더와 복사 버튼을 같은 줄에 표시
+        col1, col2 = st.columns([10, 1])
+        
+        with col1:
+            if role == "input":
+                st.markdown("### 🧑 User")
+            else:
+                st.markdown(f"### 🤖 {role}")
+        
+        with col2:
+            # 복사 버튼 (헤더 라인에 위치)
+            if st.button("📋", key=f"copy_{role}_{hash(content)}", help="Copy to clipboard"):
+                st.session_state.clipboard_content = content
+                st.session_state.last_copied = f"{role}_{hash(content)}"
+        
+        # 메시지 내용 표시
         st.write(content)
-    else:
-        # AI model response
-        st.markdown(f"### 🤖 {role}")
-        st.write(content)
+        
+        # 복사 성공 메시지 표시 (같은 메시지에 대해서만)
+        if hasattr(st.session_state, 'last_copied') and st.session_state.last_copied == f"{role}_{hash(content)}":
+            st.success("Copied to clipboard!")
+            # 실제 클립보드에 복사할 텍스트 영역 (사용자가 Ctrl+C로 복사할 수 있음)
+            st.text_area("", value=st.session_state.clipboard_content, key=f"copy_area_{hash(content)}", 
+                        height=0, label_visibility="collapsed")
     
     # Add a separator
     st.markdown("---")
