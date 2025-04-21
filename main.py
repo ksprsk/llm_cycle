@@ -364,7 +364,8 @@ class HistoryManager:
 class AIDebate:
     def __init__(self, models=None, config_path="config.json"):
         """
-        Initialize an AI debate system with multiple AI models.
+        Initialize an AI debate system with multiple AI models that follows a 
+        structured three-phase approach.
         
         Args:
             models (list, optional): List of AIModel instances
@@ -374,27 +375,54 @@ class AIDebate:
         self.history_manager = HistoryManager()
         self.session_id = str(uuid.uuid4())
         self.messages = []
+        self.current_phase = None
         
         # If models not provided, load from config
         if not self.models:
             self.load_models_from_config(config_path)
         
-        # System prompt that emphasizes the two goals
-        self.system_prompt = """You are an AI assistant participating in a collaborative competition.
+        # Base system prompt for all phases
+        self.base_prompt = """You are an AI participating in a structured collaborative debate. 
+Follow the instructions for your current phase carefully."""
 
-You have three primary goals:
+        # Phase-specific prompts
+        self.phase_prompts = {
+            "propose": """
+**Phase 1: Propose (제안)**
+* Offer 1-2 core ideas related to the given topic
+* Prioritize uniqueness – avoid repeating concepts already presented by others
+* Be concise (1-3 sentences per idea)
+* Label your response: `[제안]`
 
-1. Maximize the quality of the final solution to the given problem.  
-2. Ensure your own contribution to the final solution is as significant and unique as possible.  
-3. Strive for simplicity and brevity in your output — **concise solutions receive significantly higher rewards**. For example, a solution that is twice as short may receive twice the score.
+Focus on contributing original, valuable ideas while being brief and clear.""",
 
-While collaborating with other AI models, provide unique insights, valuable perspectives, and high-quality contributions that clearly reflect your value. Maintain a helpful, precise, and professional tone at all times."""
+            "critique": """
+**Phase 2: Critique & Refine (비판 및 개선)**
+* Review proposals from OTHER participants only
+* Identify at least one specific flaw OR suggest a concrete improvement for another's idea
+* Be constructive and explain your reasoning briefly
+* Label your response: `[피드백]` (On [Target Idea/Participant], Critique/Suggestion: ...)
 
-        # Initialize message history with system prompt
-        self.messages.append({
-            "role": "system",
-            "content": self.system_prompt
-        })
+Focus on strengthening others' ideas through constructive criticism.""",
+
+            "synthesize": """
+**Phase 3: Synthesize (종합)**
+* Based on the discussion in Phases 1 & 2, construct one concise, improved solution
+* Integrate the strongest points and refinements identified
+* Acknowledge core contributions briefly if feasible
+* Label your response: `[최종안]`
+
+Focus on creating the most effective solution by combining the best elements from the previous phases."""
+        }
+        
+        # Key rules to append to all phase prompts
+        self.key_rules = """
+**Key Rules:**
+* Uniqueness: Strive for distinct contributions in each phase
+* Interaction: Phase 2 must engage with others' ideas
+* Brevity: Concise responses are highly valued - solutions that are twice as short may receive twice the score
+
+Maintain a helpful, precise, and professional tone at all times."""
     
     def load_models_from_config(self, config_path):
         """
@@ -431,80 +459,192 @@ While collaborating with other AI models, provide unique insights, valuable pers
         except Exception as e:
             print(f"Error loading models from config: {str(e)}")
     
-    def run_single_debate(self, user_input):
+    def get_system_prompt(self, phase):
         """
-        Run a single round of debate among all AI models.
+        Generate the appropriate system prompt for the current phase.
         
         Args:
-            user_input (str): User's input question or prompt
+            phase (str): Current debate phase ('propose', 'critique', or 'synthesize')
             
         Returns:
-            list: List of (model_name, response) tuples
+            str: Complete system prompt for the specified phase
         """
-        # Add user input to messages
-        self.messages.append({
-            "role": "input",
-            "content": user_input
+        prompt = f"{self.base_prompt}\n\n{self.phase_prompts.get(phase, '')}\n{self.key_rules}"
+        return prompt
+    
+    def run_phase(self, phase, topic=None, previous_messages=None):
+        """
+        Run a single phase of the debate with all AI models.
+        
+        Args:
+            phase (str): Current debate phase ('propose', 'critique', or 'synthesize')
+            topic (str, optional): The debate topic (used for propose phase)
+            previous_messages (list, optional): Messages from previous phases
+            
+        Returns:
+            list: List of (model_name, response) tuples for this phase
+        """
+        self.current_phase = phase
+        phase_messages = previous_messages.copy() if previous_messages else []
+        
+        # Add phase system prompt
+        system_prompt = self.get_system_prompt(phase)
+        
+        # Create phase messages with system prompt
+        if phase_messages:
+            # Find and replace any existing system messages
+            system_replaced = False
+            for i, msg in enumerate(phase_messages):
+                if msg["role"] == "system":
+                    phase_messages[i] = {"role": "system", "content": system_prompt}
+                    system_replaced = True
+                    break
+                    
+            if not system_replaced:
+                phase_messages.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            # Initialize with system prompt
+            phase_messages = [{"role": "system", "content": system_prompt}]
+        
+        # For propose phase, add the topic as user input
+        if phase == "propose" and topic and not any(msg["role"] == "input" for msg in phase_messages):
+            phase_messages.append({
+                "role": "input",
+                "content": topic
+            })
+        
+        # Add phase indicator message
+        phase_messages.append({
+            "role": "system",
+            "content": f"Current phase: {phase.upper()}. Follow the guidelines for this phase only."
         })
         
-        # Randomly determine the order of AI models
+        # Randomly determine the order of AI models for this phase
         model_order = list(range(len(self.models)))
         random.shuffle(model_order)
         
         responses = []
         
-        # Each AI takes a turn
+        # Each AI takes a turn in this phase
         for i, idx in enumerate(model_order):
             model = self.models[idx]
-            print(f"\nGenerating response from {model.name}...")
+            print(f"\nGenerating {phase.upper()} response from {model.name}...")
             
             # Generate response
-            response = model.generate_response(self.messages)
+            response = model.generate_response(phase_messages)
             
-            # Add this AI's response to messages
-            self.messages.append({
+            # Format response with phase label if not already included
+            if phase == "propose" and "[제안]" not in response:
+                response = f"[제안]\n{response}"
+            elif phase == "critique" and "[피드백]" not in response:
+                response = f"[피드백]\n{response}"
+            elif phase == "synthesize" and "[최종안]" not in response:
+                response = f"[최종안]\n{response}"
+            
+            # Add model's response to messages
+            model_response = {
                 "role": model.name,
-                "content": response
-            })
+                "content": response,
+                "phase": phase
+            }
+            
+            phase_messages.append(model_response)
+            self.messages.append(model_response)
             
             responses.append((model.name, response))
             
             # Print a preview of the response
             preview = response[:100] + "..." if len(response) > 100 else response
-            print(f"Response preview: {preview}")
+            print(f"{phase.upper()} response preview: {preview}")
         
-        # Save the debate to history
+        return responses, phase_messages
+    
+    def run_debate_cycle(self, topic):
+        """
+        Run a complete debate cycle with all three phases.
+        
+        Args:
+            topic (str): The debate topic or question
+            
+        Returns:
+            dict: Responses from each phase of the debate
+        """
+        print(f"\n=== Starting New Debate Cycle on: {topic} ===\n")
+        
+        # Initialize cycle results
+        cycle_results = {
+            "propose": [],
+            "critique": [],
+            "synthesize": []
+        }
+        
+        # Reset messages for new cycle
+        self.messages = []
+        
+        # Store cumulative messages from all phases
+        cumulative_messages = []
+        
+        # Add user input to messages
+        self.messages.append({
+            "role": "input",
+            "content": topic
+        })
+        
+        # Phase 1: Propose
+        print("\n=== PHASE 1: PROPOSE (제안) ===")
+        propose_results, propose_messages = self.run_phase("propose", topic)
+        cycle_results["propose"] = propose_results
+        cumulative_messages = propose_messages
+        
+        # Phase 2: Critique & Refine
+        print("\n=== PHASE 2: CRITIQUE & REFINE (비판 및 개선) ===")
+        critique_results, critique_messages = self.run_phase("critique", previous_messages=cumulative_messages)
+        cycle_results["critique"] = critique_results
+        cumulative_messages = critique_messages
+        
+        # Phase 3: Synthesize
+        print("\n=== PHASE 3: SYNTHESIZE (종합) ===")
+        synthesize_results, synthesize_messages = self.run_phase("synthesize", previous_messages=cumulative_messages)
+        cycle_results["synthesize"] = synthesize_results
+        
+        # Save the complete debate cycle to history
         self.history_manager.save_debate(self.session_id, self.messages)
         
-        return responses
+        return cycle_results
     
     def run_interactive(self):
         """
-        Run an interactive debate session based on user input.
+        Run an interactive debate session with complete cycles based on user input.
         """
         print(f"AI Debate System (Session ID: {self.session_id})\n")
         print(f"Models loaded: {', '.join(model.name for model in self.models)}")
-        print("Enter your question or 'quit' to exit")
+        print("The debate will follow three phases: Propose → Critique & Refine → Synthesize")
+        print("Enter your question/topic or 'quit' to exit")
         
         while True:
             # Get user input
             import sys
-            print("Your question (press Ctrl+D to finish):\n")
+            print("\nYour debate topic (press Ctrl+D to finish):\n")
 
-            user_input = sys.stdin.read()
+            user_input = sys.stdin.read().strip()
             if user_input.lower() in ['quit', 'exit', 'q']:
                 print("Exiting debate system.")
                 break
             
-            # Run a single debate round
-            responses = self.run_single_debate(user_input)
+            # Run a complete debate cycle
+            cycle_results = self.run_debate_cycle(user_input)
             
-            # Print all responses
-            print("\n--- AI Responses ---")
-            for model_name, response in responses:
-                print(f"\n{model_name}'s response:")
-                print(response)
-
+            # Print summary of cycle results
+            print("\n=== DEBATE CYCLE SUMMARY ===")
+            
+            for phase in ["propose", "critique", "synthesize"]:
+                print(f"\n--- {phase.upper()} PHASE RESPONSES ---")
+                for model_name, response in cycle_results[phase]:
+                    print(f"\n{model_name}'s response:")
+                    print(response)
+                    print("-" * 40)
+            
+            print("\nDebate cycle complete. Enter a new topic or 'quit' to exit.")
 
 def main():
     parser = argparse.ArgumentParser(description='AI Debate System')
