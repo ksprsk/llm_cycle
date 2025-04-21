@@ -647,9 +647,6 @@ Maintain a helpful, precise, and professional tone at all times."""
             "synthesize": None
         }
         
-        # Reset messages for new cycle
-        self.messages = []
-        
         # Store cumulative messages from all phases
         cumulative_messages = []
         
